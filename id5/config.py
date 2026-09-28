@@ -19,8 +19,7 @@ LIVE_TITLE = "直播界面"     # 直播BP窗口
 # 以及 LICENSE 文件的抬头都从这儿取。各写一遍早晚会对不上, 而且改了一处忘了
 # 另一处这种事没人会发现。
 #
-# APP_VERSION 同时是安装包的版本号(installer.iss 通过 build.py 读它), 所以格式
-# 得是 Inno 认的 x.y.z —— 别写 "v1.0" 或者 "1.0-beta"。
+# APP_VERSION 是版本号, 保持 x.y.z 的格式 —— 设置窗口和 LICENSE 抬头都显示它。
 APP_VERSION = "1.0.0"
 APP_AUTHOR = "QiXXXi@SJTU"
 APP_LICENSE = "GPL-3.0"

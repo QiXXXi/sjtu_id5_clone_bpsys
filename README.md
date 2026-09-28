@@ -96,23 +96,6 @@ TheRedChurch.png        红教堂
 **直播界面**：无边框、可拖动，右键或 `Esc` 关闭。它会出现在任务栏里。用 OBS 的
 「窗口捕获」抓它即可。
 
-## 打包成 exe / 安装包
-
-```
-python build.py              # 全流程：PyInstaller → 拷素材 → Inno Setup
-python build.py --skip-iss   # 只出 dist/id5_clone/，不编译安装包
-python build.py --no-clean   # 增量，保留 build/ dist/
-```
-
-Windows 上也可以直接双击 `打包.bat`。
-
-- 产物：`dist/id5_clone/`（免安装目录版）、`installer_out/*-setup.exe`（安装包）
-- 编译安装包需要 [Inno Setup 6](https://jrsoftware.org/isinfo.php)：
-  `winget install --id JRSoftware.InnoSetup`
-- 注意 `build.py` 会把**你本地的 `survivor/`、`hunter/`、`map_square/`、`fonts/`、
-  `bg.jpg` 一起拷进安装包**——也就是说打出来的安装包里会带着那些第三方素材。自己留着用
-  没问题，要往外发请先确认素材的授权（见下）。
-
 ## 版权
 
 **本仓库只包含代码。** 下面这些是第三方素材，版权不属于本项目，也没有随仓库分发：
