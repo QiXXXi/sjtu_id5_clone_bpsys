@@ -1,0 +1,6 @@
+# 主应用 (app.py)
+pillow>=10.0          # 头像缩略图、立绘尺寸校验
+pypinyin>=0.51        # 下拉菜单的首字母/全拼检索 (cz -> 厂长)
+
+# 仅打包 sync_characters.exe 时需要
+# pyinstaller>=6.0

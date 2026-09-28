@@ -1,0 +1,26 @@
+# =============================================================================
+# 换行符。**这个文件不是可选的**, 它挡着一个真会复现的 bug。
+# =============================================================================
+
+# 打包.bat 必须是 CRLF。cmd.exe 的批处理解析器不吃裸 LF: 它会把行首的 REM 丢掉,
+# 把后面的文本当命令执行 —— 这个坑上一轮真的踩过, 现象是双击后闪一下就没了。
+#
+# git 默认的 `core.autocrlf` 在 Windows 上是 true、在 Linux/macOS 上是 input, 也就
+# 是说**不写这条, clone 的人拿到的 .bat 可能是 LF 的**, 在他机器上就是坏的, 而且
+# 报错完全指不到换行符上。这里显式钉死: 不管谁 clone、不管他的 autocrlf 怎么设,
+# 检出到工作区的 .bat 一定是 CRLF。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 其余文本按 git 默认走: 仓库里存 LF, 按各人的平台检出。
+* text=auto
+
+# 二进制, 别让 git 去做换行转换或差异统计。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ttf binary
+*.otf binary
+*.ttc binary
+*.exe binary
+*.dll binary
