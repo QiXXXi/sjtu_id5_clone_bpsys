@@ -25,6 +25,22 @@ def enable_dpi_awareness():
         pass
 
 
+def set_app_id():
+    """给进程一个自己的 AppUserModelID。
+
+    Windows 默认按"哪个 exe"决定任务栏图标和按钮归组 —— 源码运行时那个 exe 是
+    python.exe, 于是任务栏上显示的是 **Python 的图标**, 光设窗口图标压不过它。
+    显式声明一个 AppID 之后, 任务栏和 Alt-Tab 才认这是「第五人格BP工具」。
+    必须在创建任何窗口之前调用。
+    """
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "QiXXXi.SJTU.id5_clone")
+    except Exception:
+        pass
+
+
 def parse_size(argv):
     for i, arg in enumerate(argv):
         if arg == "--size" and i + 1 < len(argv):
@@ -38,6 +54,7 @@ def parse_size(argv):
 
 def main():
     enable_dpi_awareness()
+    set_app_id()
     app = App(size=parse_size(sys.argv[1:]))
     app.root.mainloop()
     return 0

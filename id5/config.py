@@ -40,6 +40,35 @@ DIR_MAP = "map_square"
 # 字体目录(相对 base_dir)。里面的 ttf/otf 会在启动时注册给本进程, 见 register_fonts()。
 DIR_FONT = "fonts"
 
+# ---------------------------------------------------------------- 图标
+
+# 应用图标。**仓库里只维护 logo.png 这一份**: exe 和安装包用的 .ico 由 build.py
+# 从它生成(见 build.make_ico), 运行时两个窗口的图标也直接读这张 PNG。
+ICON_FILE = "logo.png"
+
+
+def apply_icon(win):
+    """给窗口设图标。取不到就静默保持 Tk 默认图标, 不让它拖垮启动。
+
+    **必须把 PhotoImage 留在活着的引用上**: Tk 只存图片名, Python 这边一被 GC
+    回收图标就没了 —— 和 ThumbCache 里 canvas 图片是同一个坑。所以挂到窗口对象
+    上, 而不是让它当个局部变量。
+
+    tkinter 在这里 import 而不是放文件头: build.py 也要 import 本模块去读版本号,
+    没必要为此把 GUI 库拖进一个纯打包脚本的进程。
+    """
+    try:
+        import tkinter as tk
+        path = os.path.join(base_dir(), ICON_FILE)
+        if not os.path.isfile(path):
+            return
+        img = tk.PhotoImage(file=path)
+        win.iconphoto(True, img)
+        win._icon_ref = img
+    except Exception:
+        pass          # 图标是装饰, 没有也不该拦住程序启动
+
+
 # ---------------------------------------------------------------- 地图中文名
 
 # 地图缩略图是英文文件名，界面上显示中文。缺映射时回退为文件名本身。

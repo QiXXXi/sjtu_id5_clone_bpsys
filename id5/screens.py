@@ -160,6 +160,7 @@ class App:
         C.use_theme(self.settings["theme"])
         self.root = tk.Tk()
         self.root.title(C.APP_TITLE)
+        C.apply_icon(self.root)
         self.root.configure(bg=C.BG)
 
         w, h = size or choose_size(self.root)

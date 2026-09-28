@@ -14,6 +14,19 @@
 /build/
 /dist/
 /installer_out/
+# logo.ico 是 build.py 的 make_ico() 从 logo.png 现生成的, 不是源文件。
+/logo.ico
+
+# ---- 打包脚本: 同样不进仓库 --------------------------------------------
+# 上面那四个打包脚本, 用户决定仓库里不放(删除见提交 cba08be, 原始版本在 e35f726)。
+# 文件仍然留在本地用来出包, 所以这里显式忽略: 一来 git status 不会一直挂着它们,
+# 二来哪天一个 `git add -A` 也不会把它们带回去。
+# **别把这几个文件当可丢弃的**: build.py 里装图标那段(make_ico 必须先把底图放大到
+# 256, 否则 PIL 只存得出 16/24/32/48 四个尺寸)只存在于本机这份工作区, git 里没有。
+/build.py
+/id5_clone.spec
+/installer.iss
+/打包.bat
 
 # ---- 打包用的第三方工具 ------------------------------------------------
 # 26 MB 的 sync_characters.exe, 是 sync_characters.py 用 PyInstaller 打出来的。

@@ -367,6 +367,8 @@ class LiveWindow:
         # 标题栏是没有的, 但**名字还是要设**: 它是任务栏按钮的提示文字和
         # Alt-Tab 里那一行。无边框窗口在切窗口时没有标题栏可认, 只剩这个。
         win.title(C.LIVE_TITLE)
+        # 任务栏按钮上的图标。_fix_taskbar 补出来的那个按钮也用它。
+        C.apply_icon(win)
         # **不设 -topmost, 永远不设。** 见模块头。
         win.configure(bg=C.LIVE_BG)
         win.geometry("%dx%d+%d+%d" % ((w, h) + self._initial_pos()))
