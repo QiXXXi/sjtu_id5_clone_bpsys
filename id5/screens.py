@@ -18,6 +18,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from . import config as C
+from . import updater
 from .roster import Roster, THUMBS
 from .searchbox import SearchableAvatarDropdown, close_popup
 from .state import AppState
@@ -148,6 +149,13 @@ def choose_size(root):
 
 # ---------------------------------------------------------------- 应用
 
+# 自动弹更新日志前等多久。要等, 不能 immediate:
+#   * 让主界面先画出来 —— 一开机就盖上来一个窗口, 看着像启动器出错了;
+#   * 顺手给启动时那次静默检查留出完成的时间, 它的结果在列表接口失败时会
+#     被拿来兜底(见 ChangelogWindow._on_error)。
+CHANGELOG_DELAY_MS = 1200
+
+
 class App:
     """顶层窗口 + 屏幕切换。目前只有主页控制台, 架构上留好加第二屏的余地。"""
 
@@ -183,8 +191,18 @@ class App:
         self.state.show_note = self.show_note
         self.live_window = None      # 直播BP窗口, 由页脚按钮开关
 
+        # ---- 检查更新 ----
+        # 启动时**静默**查一次: 不弹任何东西, 结果只缓存在 update_info 里,
+        # 设置窗打开时自己去读 —— 操作者很可能整场都不开设置窗, 那次查询就白
+        # 做了, 但代价只是一个后台请求, 比每次启动弹个框好得多。
+        self.update_info = None      # 最近一次**成功**的检查结果, 见 updater.check
+        self.on_update_result = None # 检查结束后的回调(设置窗注册, 单例所以只一个)
+        self._update_busy = False
+
         self.screen = None
         self.show_screen(HomeConsoleScreen)
+        self.check_update_async()
+        self.root.after(CHANGELOG_DELAY_MS, self._maybe_show_changelog)
 
     # -- 屏幕 ----------------------------------------------------------
 
@@ -196,6 +214,93 @@ class App:
 
     def show_note(self, text, title="提示"):
         messagebox.showinfo(title, text, parent=self.root)
+
+    # -- 检查更新 ------------------------------------------------------
+
+    @property
+    def update_checking(self):
+        """是否正在查。设置窗用它决定"正在检查…"还是读缓存的结果。"""
+        return self._update_busy
+
+    def check_update_async(self):
+        """后台问一次 GitHub 有没有新版本。已经有一次在查就直接返回 False。
+
+        启动时那次和设置窗的按钮共用一个实现。结果走**队列 + after 轮询**回到
+        主线程再交给回调 —— 和工作线程里碰控件相比, 这是唯一稳的做法(Tk 不是
+        线程安全的, 运气好时看着也能跑, 那是因为 GIL 恰好在正确的时刻切换)。
+        """
+        if self._update_busy:
+            return False
+        self._update_busy = True
+        q = queue.Queue()
+
+        def worker():
+            try:
+                q.put(updater.check())
+            except updater.UpdateError as e:
+                q.put({"error": str(e)})
+            except Exception:
+                # 兜底: 后台线程里漏出去的异常没人接, 结果是按钮永远停在
+                # "正在检查…"上 —— 比报个错难查得多。
+                q.put({"error": "检查更新失败：%s"
+                                % traceback.format_exc(limit=1)})
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(120, lambda: self._poll_update(q))
+        return True
+
+    def _poll_update(self, q):
+        try:
+            payload = q.get_nowait()
+        except queue.Empty:
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(120, lambda: self._poll_update(q))
+            except tk.TclError:
+                pass                       # 窗口已经没了, 丢掉这次结果
+            return
+
+        self._update_busy = False
+        # 失败时**不覆盖**上一次成功的结果: 启动时那次多半是好的, 手动点这次
+        # 恰好断网, 不该顺手把"有新版本"那个结论一起抹掉。
+        if not payload.get("error"):
+            self.update_info = payload
+        cb = self.on_update_result
+        if cb is not None:
+            cb(payload)
+
+    # -- 更新日志 ------------------------------------------------------
+
+    def _maybe_show_changelog(self):
+        """更新后第一次启动, 自动弹一次更新日志。
+
+        判据只有一条: settings 里"看过的版本"和当前版本不一致。所以**全新装机
+        也会弹** —— 那时 settings.json 里根本没这个字段。这是有意的: 对刚装好
+        的人来说"这一版有什么"同样是有效信息; 为此再加一套"算不算新装"的判定,
+        只会多出一条永远说不清的边界。
+
+        这里**不预先记账**(不先把 seen_version 写成当前版本再开窗): 记账在
+        ChangelogWindow._fill 里, 内容真拿到了才写。否则断网启动一次就把这一版
+        标成已读, 而用户其实什么都没看到。
+        """
+        if self.settings.get("seen_version") == C.APP_VERSION:
+            return
+        # 延迟导入, 同 settings_window._open_rule_ban 那条理由: 模块级互相 import
+        # 会成环。这里还额外省掉了**每次启动**都要 import 一次 tk.Text/webbrowser
+        # 这些只有看日志才用得上的东西。
+        from .changelog_window import ChangelogWindow
+        ChangelogWindow.open(self, C.APP_VERSION, auto=True)
+
+    def mark_changelog_seen(self):
+        """记下"当前版本的更新日志已经看过了"。由 ChangelogWindow 在显示成功时调。
+
+        写盘失败(目录只读等)只意味着下次启动还会弹一遍, 不是错误 ——
+        save_settings 自己会吞掉 OSError, 这里没必要再兜一层。
+        """
+        if self.settings.get("seen_version") == C.APP_VERSION:
+            return
+        self.settings["seen_version"] = C.APP_VERSION
+        C.save_settings(self.settings)
 
     # -- 换肤 ----------------------------------------------------------
 

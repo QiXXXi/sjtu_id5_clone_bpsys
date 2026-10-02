@@ -20,9 +20,13 @@ LIVE_TITLE = "直播界面"     # 直播BP窗口
 # 另一处这种事没人会发现。
 #
 # APP_VERSION 是版本号, 保持 x.y.z 的格式 —— 设置窗口和 LICENSE 抬头都显示它。
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 APP_AUTHOR = "QiXXXi@SJTU"
 APP_LICENSE = "GPL-3.0"
+
+# 检查更新问的是这个仓库的 releases。**发版流程已经在这儿了** —— tag 和安装包
+# 本来就是同一次操作产出的, 所以版本号不用再维护第二份。见 updater 模块头。
+APP_REPO = "QiXXXi/sjtu_id5_clone_bpsys"
 
 
 def base_dir():
@@ -99,9 +103,14 @@ SIZE_CANDIDATES = [
 SCREEN_RESERVE_H = 96
 SCREEN_FRACTION = 0.96
 
-# 设置窗口的尺寸。同样是 16:9。放得下就居中显示, 放不下就退回主窗口的尺寸。
-# 想改大小只改这一个常量。
-SETTINGS_SIZE = (1024, 576)
+# 设置窗口的尺寸。放得下就居中显示, 放不下就退回主窗口的尺寸。
+# 想改大小只改这一个常量。**规则禁用窗也用这个值**(规格要求两窗一样大)。
+#
+# 高度是 680 而不是 16:9 的 576: 内容区是居中 place 的, 比窗口高就会**上下
+# 同时**被裁掉, 而且从外面看不出来是被裁的。实测最满的一屏(规则禁用预览占满
+# 两行)内容高 538px, 再加一张「版本」卡片就顶到 640 上下 —— 576 装不下。
+# 这台机器(1600x900 控制台)留出约 60px 余量。
+SETTINGS_SIZE = (1024, 680)
 
 # 配色参考尺寸: 所有度量按 实际宽 / DESIGN_W 缩放
 DESIGN_W = 1440
@@ -486,7 +495,17 @@ ANIM_MAX = 10.0
 ANIM_STEP = 0.1
 ANIM_DEFAULT = 3.0
 
-SETTINGS_DEFAULT = {"theme": THEME_DEFAULT, "animation_seconds": ANIM_DEFAULT}
+# rule_banned: **规则禁用**的角色名列表 —— 本场比赛不允许出现的角色。随机池和
+# 下拉候选都过滤掉, 已经选在格子上的会在 apply_rules() 里被清掉。
+# 存的是名字(str)而不是下标: 名册是按目录内容重建的, 下标会随着新增角色整体
+# 错位, 那是"禁用了一个角色却禁到了另一个"这种查不出来的错。
+#
+# seen_version: **最近一次看过的更新日志版本号**(不带 v)。程序启动时拿它和
+# APP_VERSION 比, 不一致就弹一次更新日志(见 screens.App._maybe_show_changelog)。
+# 空串 = 还没看过任何一版 —— 全新装机就是这个状态, 所以**新装也会弹一次**,
+# 那是有意的(刚装好的人同样想知道这一版有什么)。
+SETTINGS_DEFAULT = {"theme": THEME_DEFAULT, "animation_seconds": ANIM_DEFAULT,
+                    "rule_banned": [], "seen_version": ""}
 
 
 def settings_path():
@@ -515,6 +534,19 @@ def load_settings():
         pass
     else:
         data["animation_seconds"] = max(ANIM_MIN, min(ANIM_MAX, seconds))
+    # 规则禁用名单: 只认**字符串**, 非列表/非字符串一律当没写。
+    # 不做"名字是否还在名册里"的校验 —— 那个只有 Roster 知道, 而 config 是
+    # 在 Roster 之前加载的(见 screens.App.__init__ 的顺序)。名册里已经没有的
+    # 名字留在表里无害: 它永远匹配不到任何 Item, 过滤时白过一遍而已。
+    # 顺手去重, 手改过 json 的人不会因此在界面上看到重复项。
+    raw_banned = raw.get("rule_banned")
+    if isinstance(raw_banned, list):
+        data["rule_banned"] = sorted({s for s in raw_banned if isinstance(s, str)})
+    # 看过的版本号: 只认字符串。这里**不校验它是不是合法版本号** —— 校验要
+    # parse_version, 那在 updater 里, 而 updater 反过来 import config, 模块级
+    # 互相 import 会成环。值不对的后果只是多弹一次日志, 不值得为它解这个环。
+    if isinstance(raw.get("seen_version"), str):
+        data["seen_version"] = raw["seen_version"]
     return data
 
 
@@ -551,6 +583,10 @@ FONT_FAMILY_PREFERRED = (
     "DFPOP1W5",
     "DFPOP1W5-B5",
 )
+
+# 等宽字体族, 顺序 = 优先级。只给**更新日志里的代码块**用(见 font 下面那一节)。
+# 这几个都不含中文 —— 中文会不会因此变成方框, 由调用方决定(用 mono_for)。
+MONO_FAMILY_PREFERRED = ("Consolas", "Cascadia Mono", "Courier New")
 
 # ---------------------------------------------------------------- 字体
 
@@ -707,6 +743,47 @@ def px(value):
     return int(round(value * _SCALE))
 
 
-def font(size_px, weight="normal"):
-    """负数字号 = Tk 语义的像素高度，避免受 tk scaling 影响。"""
-    return (_pick_family(), -max(1, px(size_px)), weight)
+def font(size_px, weight="normal", slant="roman"):
+    """负数字号 = Tk 语义的像素高度，避免受 tk scaling 影响。
+
+    weight / slant 直接交给 Tk: **华康POP1 只有一个字面, 但 Windows 会合成出
+    粗体和斜体** —— 实测同一串字 normal/bold/italic 三种渲染的像素差在 3700
+    以上, 是看得出来的。所以更新日志的 markdown 里 **粗体** 和 *斜体* 能落地,
+    不需要另配字体。(代价: 合成体不如真字面好看, 但总比"支持了却看不出"强。)
+    """
+    return (_pick_family(), -max(1, px(size_px)), weight, slant)
+
+
+def mono(size_px, weight="normal"):
+    """等宽字体。**不管内容有没有中文** —— 要按内容挑就用 mono_for()。
+
+    找不到任何一个候选就退回界面字体: 代码块因此变成普通字, 但仍然能读,
+    比抛异常或显示成空白强。
+    """
+    names = _available_mono()
+    if names:
+        return (names[0], -max(1, px(size_px)), weight)
+    return font(size_px, weight)
+
+
+def mono_for(text, size_px, weight="normal"):
+    """按内容挑等宽还是界面字体。
+
+    Windows 的等宽字体(Consolas 这些)都不含汉字, 缺字靠 GDI 的字体链接补
+    —— 补出来的字号和基线跟旁边的字对不齐, 一行里两种字体比不换还难看。
+    所以代码块里只要有非 ASCII 字符, 就整块用界面字体, 靠底色区分。
+    """
+    if all(ord(ch) < 128 for ch in text):
+        return mono(size_px, weight)
+    return font(size_px, weight)
+
+
+def _available_mono():
+    """系统里真正装了的等宽字体族(按优先级)。量不出来就返回空。"""
+    try:
+        import tkinter.font as tkfont
+        available = set(tkfont.families())
+    except Exception:
+        # 还没有 Tk 根窗口, 问不出字体列表(同 _pick_family 那条注释)。
+        return []
+    return [n for n in MONO_FAMILY_PREFERRED if n in available]

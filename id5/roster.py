@@ -162,6 +162,7 @@ class ThumbCache:
         self._row = {}          # value -> (stamp, PhotoImage)
         self._sel = {}
         self._cut = {}          # (group, value, w, h, gray) -> (stamp, (rgb, alpha))
+        self._square = {}       # (group, value, side, bg) -> (stamp, PhotoImage)
         self._placeholder = {}  # size -> 透明占位图
 
     def warm(self, items):
@@ -229,6 +230,37 @@ class ThumbCache:
     def warm_live(self, items, group, w, h, gray=False):
         for item in items:
             self.cutout(item, group, w, h, gray=gray)
+
+    # -- 实底头像(规则禁用窗 / 设置页预览) ------------------------------
+
+    def square(self, item, group, side, bg):
+        """边长 side 的正方形头像, **合成到实色 bg 上**, 直接给 Label/Canvas 用。
+
+        和 cutout() 的分工: cutout() 交的是预乘的 (rgb, alpha), 因为直播窗口
+        每格底下压着一张**各不相同**的背景图裁片, 合成只能交给调用方现做。
+        这里底色是恒定的(卡片的 CARD), 预先合好就行 —— 而且合好的图是**不
+        透明**的, 边缘不会出现半透明的缝。
+
+        合成必须在**全分辨率**下做完再缩: 素材是带透明通道的抠图, 透明像素的
+        RGB 通常是黑, 先缩再合会让 LANCZOS 从那圈黑里带出暗边(和 _cutout 里
+        那段是同一个坑, 这里由 cutout() 代劳了)。
+
+        bg 进键: 换肤之后底色变了, 重新合一张。**不能拿旧底色的图充数** ——
+        图是烘死在底上的, 底色一换, 每一格周围会留下一圈旧色的方框。
+        """
+        from PIL import Image, ImageColor, ImageTk
+        side = max(1, int(side))
+        key = (group, item.value, side, bg)
+        stamp = _stamp(item)
+        entry = self._square.get(key)
+        if entry is not None and entry[0] == stamp:
+            return entry[1]
+        rgb, alpha = self.cutout(item, group, side, side)
+        base = Image.new("RGB", (side, side), ImageColor.getrgb(bg))
+        base.paste(rgb, (0, 0), alpha)
+        photo = ImageTk.PhotoImage(base)
+        self._square[key] = (stamp, photo)
+        return photo
 
     # -- 占位 ----------------------------------------------------------
 

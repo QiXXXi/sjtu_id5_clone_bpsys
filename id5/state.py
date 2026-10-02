@@ -46,10 +46,24 @@ class AppState:
         self.show_note = None         # 由 Screen 注入, 用于弹提示
 
         settings = settings or {}
+        # 留着这一份引用: set_rule_banned() 要往里写, 再由 App 那边落盘。
+        # 不能只存该读的几个字段 —— 落盘写的是**整份** settings.json,
+        # 少一个字段就会把主题、动画时长一起抹掉。
+        self.settings = settings
+
         # 随机抽取后的点击锁定持续多久。设置界面直接绑这个变量。
         self.animation_seconds = tk.DoubleVar(
             master=root,
             value=settings.get("animation_seconds", C.ANIM_DEFAULT))
+
+        # ---- 规则禁用 ----
+        # 比赛规则排除掉的角色: **既不能被随机到, 也不能被手动选中**。
+        # 两个入口都要堵 —— _pool()(随机池)和 pool_for()(下拉候选项);
+        # 另外已经选在格子上的, 由 _apply_rule_banned() 清掉。
+        #
+        # 用 set 而不是 list: 每次抽取、每次弹下拉都要拿整个候选池比一遍
+        # (52 + 36 个), 而这东西一年也改不了几次。
+        self.rule_banned = set(settings.get("rule_banned") or ())
 
         # ---- 第 0 行开关 ----
         # 默认**开**: 克隆模式是常规赛制, 非克隆是少数。这里只是给变量一个初值,
@@ -137,6 +151,7 @@ class AppState:
             self._apply_clone_mode()
             self._apply_map_random()
             self._apply_syncing()
+            self._apply_rule_banned()
             self._apply_lock()
         finally:
             self._was_disabled = frozenset()
@@ -238,6 +253,27 @@ class AppState:
         """
         if self.update_button is not None:
             self._rule_set(self.update_button, not self.syncing)
+
+    def _apply_rule_banned(self):
+        """清掉已经落在格子上的**规则禁用**角色。
+
+        光在候选池里过滤不够: "先选了 X、之后 X 才被规则禁用"是常态 —— 操作者
+        多半是在比赛中途才发现某个角色要排除的。不清的话那些格子会留着一个
+        再也选不回来的值, 而且它还会算进 used_*() 里继续挤占候选。
+
+        不走 _rule_disable: 那不是"这个控件不可用", 是"这一格的值不合法了"。
+        也因此不需要边沿判断 —— 清完它就是空的, 再跑一遍什么也不做, 幂等是
+        天然的(apply_rules 每帧都跑, 这条很重要)。
+
+        只扫角色格。地图不可能出现在 rule_banned 里 —— 规则禁用窗列的只有
+        求生者和监管者。
+        """
+        banned = self.rule_banned
+        if not banned:
+            return
+        for box in self.ban_boxes + self.pick_boxes + self.gban_boxes:
+            if box.get() in banned:
+                box.clear()
 
     def _apply_lock(self):
         """锁定期间禁用全部交互控件(在其它规则之上再压一层)。
@@ -347,11 +383,19 @@ class AppState:
 
         "或就是它自己选的那个"这一条不能省: 克隆模式下四个求生者位存的是
         同一个值, 否则每个格子都会把彼此算作占用, 列表直接变空。
+
+        规则禁用也在这里堵一道: 被规则禁用的角色**不出现在任何选择列表里**。
+        只堵随机(_pool)是不够的 —— 那样子还能手动把它填进 ban 位。
         """
         mine = box.get()
         items = self.roster.groups[group] if self.roster else []
         used = {p.get() for p in peers if p is not box and p.get()}
-        return [it for it in items if it.value not in used or it.value == mine]
+        # 地图不受规则禁用影响, 规则禁用窗里根本没有地图。这里按组判一次,
+        # 免得万一某张地图跟某个角色重名, 整张地图静静地从列表里消失。
+        banned = self.rule_banned if group != "map" else ()
+        return [it for it in items
+                if (it.value not in used or it.value == mine)
+                and it.value not in banned]
 
     # ------------------------------------------------------------ 随机
 
@@ -375,14 +419,46 @@ class AppState:
                           "value": value, "items": list(items),
                           "ms": self.anim_ms()}
 
+    # ------------------------------------------------------------ 规则禁用
+
+    def set_rule_banned(self, names):
+        """整份替换规则禁用名单, 并落盘。
+
+        收的是**完整的新名单**, 不是增量 —— 规则禁用窗编辑的是一份工作副本,
+        点保存时整份交过来。增量式("加一个/减一个")在这里没有好处: 窗口关掉
+        之后就没人知道中间那几次点击算不算数了, 得在窗口里再存一份原始快照
+        才能支持"取消", 反而更复杂。
+
+        落盘走 app.settings 那份**引用**(构造时存的), 而不是自己重读 ——
+        save_settings 写的是整个文件, 重读会把别的字段的理论上的更新盖掉。
+
+        **要 apply_rules()**: 新禁用的角色可能正落在某个格子上, 得清掉。
+        那一步在 _apply_rule_banned() 里, 是 apply_rules 的一条规则。
+        """
+        self.rule_banned = set(names)
+        self.settings["rule_banned"] = sorted(self.rule_banned)
+        C.save_settings(self.settings)
+        self.apply_rules()
+
     def _pool(self, group, excluded):
-        """候选池 = 该组的全部去掉排除集。
+        """候选池 = 该组的全部, 去掉排除集, 再去掉**规则禁用**的那批。
 
         下面三个 random_* 都先把池子算出来再交给 _choose(pool, ()) —— 传空排除
         集是**等价**的(_choose 会再过滤一遍, 而这里已经滤过了), 好处是同一个池
         子能顺手记进抽取令牌, 不必为了动画多滤一遍。
+
+        规则禁用在这里挡住随机那一半。另一半(下拉候选项)在 pool_for(), 落在
+        格子上的遗留值在 _apply_rule_banned() —— 三处合起来才是"被规则禁用的
+        角色既选不到也随机不到"。
         """
-        return [it for it in self.roster.groups[group] if it.value not in excluded]
+        banned = self.rule_banned
+        items = self.roster.groups[group]
+        if not banned:
+            # 空集合是常态, 别让每次抽取都多走一次 in 判断。地图组尤其冤 ——
+            # 它根本不可能被规则禁用, 却也要过一遍。
+            return [it for it in items if it.value not in excluded]
+        return [it for it in items
+                if it.value not in excluded and it.value not in banned]
 
     def random_survivor(self, index):
         """index 0-3。克隆模式下 index 恒为 0, 一次写四个位置。"""
